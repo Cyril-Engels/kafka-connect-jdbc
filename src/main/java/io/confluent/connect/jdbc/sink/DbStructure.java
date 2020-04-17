@@ -15,6 +15,7 @@
 
 package io.confluent.connect.jdbc.sink;
 
+import io.confluent.connect.jdbc.util.TableType;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -128,18 +129,41 @@ public class DbStructure {
       return false;
     }
 
+    // At this point there are missing fields
+    TableType type = tableDefn.type();
+    switch (type) {
+      case TABLE:
+        // Rather than embed the logic and change lots of lines, just break out
+        break;
+      case VIEW:
+      default:
+        throw new ConnectException(
+            String.format(
+                "%s %s is missing fields (%s) and ALTER %s is unsupported",
+                type.capitalized(),
+                tableId,
+                missingFields,
+                type.jdbcName()
+            )
+        );
+    }
+
     for (SinkRecordField missingField: missingFields) {
       if (!missingField.isOptional() && missingField.defaultValue() == null) {
-        throw new ConnectException(
-            "Cannot ALTER to add missing field " + missingField
-            + ", as it is not optional and does not have a default value"
-        );
+        throw new ConnectException(String.format(
+            "Cannot ALTER %s %s to add missing field %s, as the field is not optional and does "
+                + "not have a default value",
+            type.jdbcName(),
+            tableId,
+            missingField
+        ));
       }
     }
 
     if (!config.autoEvolve) {
       throw new ConnectException(String.format(
-          "Table %s is missing fields (%s) and auto-evolution is disabled",
+          "%s %s is missing fields (%s) and auto-evolution is disabled",
+          type.capitalized(),
           tableId,
           missingFields
       ));
@@ -147,7 +171,8 @@ public class DbStructure {
 
     final List<String> amendTableQueries = dbDialect.buildAlterTable(tableId, missingFields);
     log.info(
-        "Amending table to add missing fields:{} maxRetries:{} with SQL: {}",
+        "Amending {} to add missing fields:{} maxRetries:{} with SQL: {}",
+        type,
         missingFields,
         maxRetries,
         amendTableQueries
@@ -158,7 +183,8 @@ public class DbStructure {
       if (maxRetries <= 0) {
         throw new ConnectException(
             String.format(
-                "Failed to amend table '%s' to add missing fields: %s",
+                "Failed to amend %s '%s' to add missing fields: %s",
+                type,
                 tableId,
                 missingFields
             ),

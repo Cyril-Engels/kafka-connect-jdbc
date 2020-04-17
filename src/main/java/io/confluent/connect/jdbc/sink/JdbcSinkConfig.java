@@ -15,10 +15,12 @@
 
 package io.confluent.connect.jdbc.sink;
 
+import io.confluent.connect.jdbc.util.TableType;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -216,12 +218,12 @@ public class JdbcSinkConfig extends AbstractConfig {
   public static final String TABLE_TYPES_DEFAULT = "TABLE";
   public static final String TABLE_TYPES = "table.types";
   private static final String TABLE_TYPES_DOC =
-      "By default, the JDBC connector will only detect tables with type TABLE from the sink "
-          + "Database. This config allows a command separated list of table types to write to. "
-          + "Options include:\n"
-          + "  * TABLE\n"
-          + "  * VIEW\n"
-          + "  In most cases it only makes sense to have TABLE.";
+      "The comma-separated types of database tables to which the sink connector can write. "
+          + "By default this is ``" + TableType.TABLE + "``, but any combination of ``"
+          + TableType.TABLE + "`` and ``" + TableType.VIEW + "`` is allowed. Note that when "
+          + "views are included, the sink connector will fail if the view definition does not "
+          + "match the records' schemas.";
+
   private static final String TABLE_TYPES_DISPLAY = "Table Types";
 
   private static final EnumRecommender QUOTE_METHOD_RECOMMENDER =
@@ -302,13 +304,14 @@ public class JdbcSinkConfig extends AbstractConfig {
           TABLE_TYPES,
           ConfigDef.Type.LIST,
           TABLE_TYPES_DEFAULT,
+          EnumRecommender.in(TableType.values()),
           ConfigDef.Importance.LOW,
           TABLE_TYPES_DOC,
           WRITES_GROUP,
           3,
           Width.MEDIUM,
           TABLE_TYPES_DISPLAY
-      )
+        )
         // Data Mapping
         .define(
             TABLE_NAME_FORMAT,
@@ -438,6 +441,7 @@ public class JdbcSinkConfig extends AbstractConfig {
   public final Set<String> fieldsWhitelist;
   public final String dialectName;
   public final TimeZone timeZone;
+  public final EnumSet<TableType> tableTypes;
 
   public JdbcSinkConfig(Map<?, ?> props) {
     super(CONFIG_DEF, props);
@@ -457,6 +461,7 @@ public class JdbcSinkConfig extends AbstractConfig {
     fieldsWhitelist = new HashSet<>(getList(FIELDS_WHITELIST));
     String dbTimeZone = getString(DB_TIMEZONE_CONFIG);
     timeZone = TimeZone.getTimeZone(ZoneId.of(dbTimeZone));
+    tableTypes = TableType.parse(getList(TABLE_TYPES));
   }
 
   private String getPasswordValue(String key) {
@@ -465,6 +470,14 @@ public class JdbcSinkConfig extends AbstractConfig {
       return password.value();
     }
     return null;
+  }
+
+  public boolean includesTables() {
+    return tableTypes.contains(TableType.TABLE);
+  }
+
+  public boolean includesViews() {
+    return tableTypes.contains(TableType.VIEW);
   }
 
   private static class EnumValidator implements ConfigDef.Validator {

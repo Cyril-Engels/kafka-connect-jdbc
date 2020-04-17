@@ -44,6 +44,10 @@ public class TableDefinitions {
     this.dialect = dialect;
   }
 
+  public DatabaseDialect dialect() {
+    return dialect;
+  }
+
   /**
    * Get the {@link TableDefinition} for the given table.
    *
