@@ -15,7 +15,9 @@
 
 package io.confluent.connect.jdbc.dialect;
 
+import io.confluent.connect.jdbc.util.TableType;
 import java.time.ZoneOffset;
+import java.util.EnumSet;
 import java.util.TimeZone;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.types.Password;
@@ -776,13 +778,50 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       TableId tableId
   ) throws SQLException {
     Map<ColumnId, ColumnDefinition> columnDefns = describeColumns(connection, tableId.catalogName(),
-                                                                  tableId.schemaName(),
-                                                                  tableId.tableName(), null
+        tableId.schemaName(),
+        tableId.tableName(),
+        null
     );
     if (columnDefns.isEmpty()) {
       return null;
     }
-    return new TableDefinition(tableId, columnDefns.values());
+    // Get the type of table
+    TableType type = tableTypeFor(connection, tableId);
+    if (type == null) {
+      log.debug("{} dialect unable to determine the table type for {}; using TABLE", this, tableId);
+      type = TableType.TABLE;
+    }
+    return new TableDefinition(tableId, columnDefns.values(), type);
+  }
+
+  protected TableType tableTypeFor(
+      Connection connection,
+      TableId tableId
+  ) throws SQLException {
+    log.info("Checking {} dialect for existence of {} {}", this, tableTypes, tableId);
+    try (ResultSet rs = connection.getMetaData().getTables(
+        tableId.catalogName(),
+        tableId.schemaName(),
+        tableId.tableName(),
+        tableTypes.toArray(new String[0])
+    )) {
+      if (rs.next()) {
+        final String tableType = rs.getString(4);
+        try {
+          return TableType.get(tableType);
+        } catch (IllegalArgumentException e) {
+          log.warn(
+              "{} dialect found unknown type '{}' for {} {}; using TABLE",
+              this,
+              tableType,
+              tableTypes,
+              tableId
+          );
+        }
+      }
+    }
+    log.warn("{} dialect did not find type for {} {}; using TABLE", this, tableTypes, tableId);
+    return TableType.TABLE;
   }
 
   /**
