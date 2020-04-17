@@ -34,6 +34,7 @@ import io.confluent.connect.jdbc.util.TimeZoneValidator;
 
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
+import org.apache.kafka.common.config.ConfigDef.Width;
 import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.types.Password;
 
@@ -212,6 +213,17 @@ public class JdbcSinkConfig extends AbstractConfig {
   private static final String QUOTE_SQL_IDENTIFIERS_DISPLAY =
       JdbcSourceConnectorConfig.QUOTE_SQL_IDENTIFIERS_DISPLAY;
 
+  public static final String TABLE_TYPES_DEFAULT = "TABLE";
+  public static final String TABLE_TYPES = "table.types";
+  private static final String TABLE_TYPES_DOC =
+      "By default, the JDBC connector will only detect tables with type TABLE from the sink "
+          + "Database. This config allows a command separated list of table types to write to. "
+          + "Options include:\n"
+          + "  * TABLE\n"
+          + "  * VIEW\n"
+          + "  In most cases it only makes sense to have TABLE.";
+  private static final String TABLE_TYPES_DISPLAY = "Table Types";
+
   private static final EnumRecommender QUOTE_METHOD_RECOMMENDER =
       EnumRecommender.in(QuoteMethod.values());
 
@@ -286,7 +298,17 @@ public class JdbcSinkConfig extends AbstractConfig {
             2,
             ConfigDef.Width.SHORT,
             BATCH_SIZE_DISPLAY
-        )
+        ).define(
+          TABLE_TYPES,
+          ConfigDef.Type.LIST,
+          TABLE_TYPES_DEFAULT,
+          ConfigDef.Importance.LOW,
+          TABLE_TYPES_DOC,
+          WRITES_GROUP,
+          3,
+          Width.MEDIUM,
+          TABLE_TYPES_DISPLAY
+      )
         // Data Mapping
         .define(
             TABLE_NAME_FORMAT,

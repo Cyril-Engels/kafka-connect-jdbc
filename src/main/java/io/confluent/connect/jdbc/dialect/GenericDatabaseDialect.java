@@ -166,7 +166,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     if (config instanceof JdbcSinkConfig) {
       catalogPattern = JdbcSourceTaskConfig.CATALOG_PATTERN_DEFAULT;
       schemaPattern = JdbcSourceTaskConfig.SCHEMA_PATTERN_DEFAULT;
-      tableTypes = new HashSet<>(Arrays.asList(JdbcSourceTaskConfig.TABLE_TYPE_DEFAULT));
+      tableTypes = new HashSet<>(config.getList(JdbcSinkConfig.TABLE_TYPES));
       quoteSqlIdentifiers = QuoteMethod.get(
           config.getString(JdbcSinkConfig.QUOTE_SQL_IDENTIFIERS_CONFIG)
       );
@@ -538,7 +538,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
         tableId.catalogName(),
         tableId.schemaName(),
         tableId.tableName(),
-        new String[]{"TABLE"}
+        tableTypes.toArray(new String[0])
     )) {
       final boolean exists = rs.next();
       log.info("Using {} dialect table {} {}", this, tableId, exists ? "present" : "absent");

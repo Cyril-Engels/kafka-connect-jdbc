@@ -24,15 +24,25 @@ import java.util.Set;
  * A description of a table.
  */
 public class TableDefinition {
+
   private final TableId id;
   private final Map<String, ColumnDefinition> columnsByName = new LinkedHashMap<>();
   private final Map<String, String> pkColumnNames = new LinkedHashMap<>();
+  private final TableType type;
 
   public TableDefinition(
       TableId id,
       Iterable<ColumnDefinition> columns
   ) {
+    this(id, columns, TableType.TABLE);
+  }
+  public TableDefinition(
+      TableId id,
+      Iterable<ColumnDefinition> columns,
+      TableType type
+  ) {
     this.id = id;
+    this.type = type;
     for (ColumnDefinition defn : columns) {
       String columnName = defn.id().name();
       columnsByName.put(
@@ -50,6 +60,10 @@ public class TableDefinition {
 
   public TableId id() {
     return id;
+  }
+
+  public TableType type() {
+    return type;
   }
 
   public int columnCount() {
@@ -84,14 +98,16 @@ public class TableDefinition {
     }
     if (obj instanceof TableDefinition) {
       TableDefinition that = (TableDefinition) obj;
-      return this.id.equals(that.id()) && this.definitionsForColumns()
-                                              .equals(that.definitionsForColumns());
+      return this.id.equals(that.id())
+          && this.type.equals(that.type())
+          && this.definitionsForColumns().equals(that.definitionsForColumns());
     }
     return false;
   }
 
   @Override
   public String toString() {
-    return "Table{" + "name='" + id + '\'' + ", columns=" + definitionsForColumns() + '}';
+    return "Table{" + "name='" + id + '\'' + ", type=" + type
+        + ", columns=" + definitionsForColumns() + '}';
   }
 }
