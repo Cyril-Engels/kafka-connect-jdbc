@@ -340,66 +340,6 @@ public class JdbcSourceTask extends SourceTask {
 
   @Override
   public List<SourceRecord> poll() throws InterruptedException {
-    log.trace("{} Polling for new data");
-
-    while (running.get()) {
-      final TableQuerier querier = tableQueue.peek();
-
-      if (!querier.querying()) {
-        // If not in the middle of an update, wait for next update time
-        final long nextUpdate = querier.getLastUpdate()
-            + config.getInt(JdbcSourceTaskConfig.POLL_INTERVAL_MS_CONFIG);
-        final long now = time.milliseconds();
-        final long sleepMs = Math.min(nextUpdate - now, 100);
-        if (sleepMs > 0) {
-          log.trace("Waiting {} ms to poll {} next", nextUpdate - now, querier.toString());
-          time.sleep(sleepMs);
-          continue; // Re-check stop flag before continuing
-        }
-      }
-
-      final List<SourceRecord> results = new ArrayList<>();
-      try {
-        log.debug("Checking for next block of results from {}", querier.toString());
-        querier.maybeStartQuery(cachedConnectionProvider.getConnection());
-
-        int batchMaxRows = config.getInt(JdbcSourceTaskConfig.BATCH_MAX_ROWS_CONFIG);
-        boolean hadNext = true;
-        while (results.size() < batchMaxRows && (hadNext = querier.next())) {
-          results.add(querier.extractRecord());
-        }
-
-        if (!hadNext) {
-          // If we finished processing the results from the current query, we can reset and send
-          // the querier to the tail of the queue
-          resetAndRequeueHead(querier);
-        }
-
-        if (results.isEmpty()) {
-          log.trace("No updates for {}", querier.toString());
-          continue;
-        }
-
-        log.debug("Returning {} records for {}", results.size(), querier.toString());
-        return results;
-      } catch (SQLException sqle) {
-        log.error("Failed to run query for table {}: {}", querier.toString(), sqle);
-        resetAndRequeueHead(querier);
-        return null;
-      } catch (Throwable t) {
-        resetAndRequeueHead(querier);
-        // This task has failed, so close any resources (may be reopened if needed) before throwing
-        closeResources();
-        throw t;
-      }
-    }
-
-    // Only in case of shutdown
-    final TableQuerier querier = tableQueue.peek();
-    if (querier != null) {
-      resetAndRequeueHead(querier);
-    }
-    closeResources();
     return null;
   }
 
