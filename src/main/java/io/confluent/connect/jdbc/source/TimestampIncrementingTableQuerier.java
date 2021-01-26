@@ -141,7 +141,7 @@ public class TimestampIncrementingTableQuerier extends TableQuerier implements C
     
     String queryString = builder.toString();
     recordQuery(queryString);
-    log.debug("{} prepared SQL query: {}", this, queryString);
+    log.error("{} prepared SQL query: {}", this, queryString);
     stmt = dialect.createPreparedStatement(db, queryString);
   }
 
@@ -177,7 +177,8 @@ public class TimestampIncrementingTableQuerier extends TableQuerier implements C
   @Override
   protected ResultSet executeQuery() throws SQLException {
     criteria.setQueryParameters(stmt, this);
-    log.trace("Statement to execute: {}", stmt.toString());
+    log.error("Criteria {}", criteria.toString());
+    log.error("Statement to execute: {}", stmt.toString());
     return stmt.executeQuery();
   }
 

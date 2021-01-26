@@ -167,7 +167,7 @@ public class TimestampIncrementingCriteria {
     Timestamp endTime = values.endTimetampValue();
     stmt.setTimestamp(1, beginTime, DateTimeUtils.getTimeZoneCalendar(timeZone));
     stmt.setTimestamp(2, endTime, DateTimeUtils.getTimeZoneCalendar(timeZone));
-    log.debug("Executing prepared statement with timestamp value = {} end time = {}",
+    log.error("Executing prepared statement with timestamp value = {} end time = {}",
         DateTimeUtils.formatTimestamp(beginTime, timeZone),
         DateTimeUtils.formatTimestamp(endTime, timeZone)
     );
