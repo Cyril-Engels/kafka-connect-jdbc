@@ -30,6 +30,7 @@ import java.util.Map;
 
 import io.confluent.connect.jdbc.dialect.DatabaseDialect;
 import io.confluent.connect.jdbc.dialect.DatabaseDialects;
+import io.confluent.connect.jdbc.util.Version;
 
 public class JdbcSinkTask extends SinkTask {
   private static final Logger log = LoggerFactory.getLogger(JdbcSinkTask.class);
@@ -79,18 +80,20 @@ public class JdbcSinkTask extends SinkTask {
           remainingRetries,
           sqle
       );
-      String sqleAllMessages = "";
+      String sqleAllMessages = "Exception chain:" + System.lineSeparator();
       for (Throwable e : sqle) {
         sqleAllMessages += e + System.lineSeparator();
       }
+      SQLException sqlAllMessagesException = new SQLException(sqleAllMessages);
+      sqlAllMessagesException.setNextException(sqle);
       if (remainingRetries == 0) {
-        throw new ConnectException(new SQLException(sqleAllMessages));
+        throw new ConnectException(sqlAllMessagesException);
       } else {
         writer.closeQuietly();
         initWriter();
         remainingRetries--;
         context.timeout(config.retryBackoffMs);
-        throw new RetriableException(new SQLException(sqleAllMessages));
+        throw new RetriableException(sqlAllMessagesException);
       }
     }
     remainingRetries = config.maxRetries;
@@ -120,7 +123,7 @@ public class JdbcSinkTask extends SinkTask {
 
   @Override
   public String version() {
-    return getClass().getPackage().getImplementationVersion();
+    return Version.getVersion();
   }
 
 }

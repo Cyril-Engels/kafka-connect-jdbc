@@ -62,6 +62,7 @@ import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import io.confluent.connect.jdbc.dialect.DatabaseDialectProvider.FixedScoreProvider;
 import io.confluent.connect.jdbc.sink.JdbcSinkConfig;
@@ -88,6 +89,7 @@ import io.confluent.connect.jdbc.util.JdbcDriverInfo;
 import io.confluent.connect.jdbc.util.QuoteMethod;
 import io.confluent.connect.jdbc.util.TableDefinition;
 import io.confluent.connect.jdbc.util.TableId;
+import io.confluent.connect.jdbc.util.TableType;
 
 /**
  * A {@link DatabaseDialect} implementation that provides functionality based upon JDBC and SQL.
@@ -164,9 +166,10 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     this.jdbcUrl = config.getString(JdbcSourceConnectorConfig.CONNECTION_URL_CONFIG);
     this.jdbcUrlInfo = DatabaseDialects.extractJdbcUrlInfo(jdbcUrl);
     if (config instanceof JdbcSinkConfig) {
+      JdbcSinkConfig sinkConfig = (JdbcSinkConfig) config;
       catalogPattern = JdbcSourceTaskConfig.CATALOG_PATTERN_DEFAULT;
       schemaPattern = JdbcSourceTaskConfig.SCHEMA_PATTERN_DEFAULT;
-      tableTypes = new HashSet<>(Arrays.asList(JdbcSourceTaskConfig.TABLE_TYPE_DEFAULT));
+      tableTypes = sinkConfig.tableTypeNames();
       quoteSqlIdentifiers = QuoteMethod.get(
           config.getString(JdbcSinkConfig.QUOTE_SQL_IDENTIFIERS_CONFIG)
       );
@@ -305,9 +308,15 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   /**
    * Add or modify any connection properties based upon the {@link #config configuration}.
    *
-   * <p>By default this method does nothing and returns the {@link Properties} object supplied as a
-   * parameter, but subclasses can override it to add/remove properties used to create new
-   * connections.
+   * <p>By default this method adds any {@code connection.*} properties (except those predefined
+   * by the connector's ConfigDef, such as {@code connection.url}, {@code connection.user},
+   * {@code connection.password}, {@code connection.attempts}, etc.) only after removing the
+   * {@code connection.} prefix. This allows users to add any additional DBMS-specific properties
+   * for the database to the connector configuration by prepending the DBMS-specific
+   * properties with the {@code connection.} prefix.
+   *
+   * <p>Subclasses that don't wish to support this behavior can override this method without
+   * calling this super method.
    *
    * @param properties the properties that will be passed to the {@link DriverManager}'s {@link
    *                   DriverManager#getConnection(String, Properties) getConnection(...) method};
@@ -316,6 +325,14 @@ public class GenericDatabaseDialect implements DatabaseDialect {
    *     should be returned; never null
    */
   protected Properties addConnectionProperties(Properties properties) {
+    // Get the set of config keys that are known to the connector
+    Set<String> configKeys = config.values().keySet();
+    // Add any configuration property that begins with 'connection.` and that is not known
+    config.originalsWithPrefix(JdbcSourceConnectorConfig.CONNECTION_PREFIX).forEach((k,v) -> {
+      if (!configKeys.contains(JdbcSourceConnectorConfig.CONNECTION_PREFIX + k)) {
+        properties.put(k, v);
+      }
+    });
     return properties;
   }
 
@@ -382,6 +399,8 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   public List<TableId> tableIds(Connection conn) throws SQLException {
     DatabaseMetaData metadata = conn.getMetaData();
     String[] tableTypes = tableTypes(metadata, this.tableTypes);
+    String tableTypeDisplay = displayableTableTypes(tableTypes, ", ");
+    log.debug("Using {} dialect to get {}", this, tableTypeDisplay);
 
     try (ResultSet rs = metadata.getTables(catalogPattern(), schemaPattern(), "%", tableTypes)) {
       List<TableId> tableIds = new ArrayList<>();
@@ -394,6 +413,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
           tableIds.add(tableId);
         }
       }
+      log.debug("Used {} dialect to find {} {}", this, tableIds.size(), tableTypeDisplay);
       return tableIds;
     }
   }
@@ -412,6 +432,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
    * <p>This method can be overridden to exclude certain database tables.
    *
    * @param table the identifier of the table; may be null
+   * @return true if the table should be included; false otherwise
    */
   protected boolean includeTable(TableId table) {
     return true;
@@ -431,6 +452,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       DatabaseMetaData metadata,
       Set<String> types
   ) throws SQLException {
+    log.debug("Using {} dialect to check support for {}", this, types);
     // Compute the uppercase form of the desired types ...
     Set<String> uppercaseTypes = new HashSet<>();
     for (String type : types) {
@@ -448,7 +470,9 @@ public class GenericDatabaseDialect implements DatabaseDialect {
         }
       }
     }
-    return matchingTableTypes.toArray(new String[matchingTableTypes.size()]);
+    String[] result = matchingTableTypes.toArray(new String[matchingTableTypes.size()]);
+    log.debug("Used {} dialect to find table types: {}", this, result);
+    return result;
   }
 
   @Override
@@ -533,17 +557,30 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       Connection connection,
       TableId tableId
   ) throws SQLException {
-    log.info("Checking {} dialect for existence of table {}", this, tableId);
+    DatabaseMetaData metadata = connection.getMetaData();
+    String[] tableTypes = tableTypes(metadata, this.tableTypes);
+    String tableTypeDisplay = displayableTableTypes(tableTypes, "/");
+    log.info("Checking {} dialect for existence of {} {}", this, tableTypeDisplay, tableId);
     try (ResultSet rs = connection.getMetaData().getTables(
         tableId.catalogName(),
         tableId.schemaName(),
         tableId.tableName(),
-        new String[]{"TABLE"}
+        tableTypes
     )) {
       final boolean exists = rs.next();
-      log.info("Using {} dialect table {} {}", this, tableId, exists ? "present" : "absent");
+      log.info(
+          "Using {} dialect {} {} {}",
+          this,
+          tableTypeDisplay,
+          tableId,
+          exists ? "present" : "absent"
+      );
       return exists;
     }
+  }
+
+  protected String displayableTableTypes(String[] types, String delim) {
+    return Arrays.stream(types).sorted().collect(Collectors.joining(delim));
   }
 
   @Override
@@ -782,7 +819,50 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     if (columnDefns.isEmpty()) {
       return null;
     }
-    return new TableDefinition(tableId, columnDefns.values());
+    TableType tableType = tableTypeFor(connection, tableId);
+    return new TableDefinition(tableId, columnDefns.values(), tableType);
+  }
+
+  protected TableType tableTypeFor(
+      Connection connection,
+      TableId tableId
+  ) throws SQLException {
+    DatabaseMetaData metadata = connection.getMetaData();
+    String[] tableTypes = tableTypes(metadata, this.tableTypes);
+    String tableTypeDisplay = displayableTableTypes(tableTypes, "/");
+    log.info("Checking {} dialect for type of {} {}", this, tableTypeDisplay, tableId);
+    try (ResultSet rs = connection.getMetaData().getTables(
+        tableId.catalogName(),
+        tableId.schemaName(),
+        tableId.tableName(),
+        tableTypes
+    )) {
+      if (rs.next()) {
+        //final String catalogName = rs.getString(1);
+        //final String schemaName = rs.getString(2);
+        //final String tableName = rs.getString(3);
+        final String tableType = rs.getString(4);
+        try {
+          return TableType.get(tableType);
+        } catch (IllegalArgumentException e) {
+          log.warn(
+              "{} dialect found unknown type '{}' for {} {}; using TABLE",
+              this,
+              tableType,
+              tableTypeDisplay,
+              tableId
+          );
+          return TableType.TABLE;
+        }
+      }
+    }
+    log.warn(
+        "{} dialect did not find type for {} {}; using TABLE",
+        this,
+        tableTypeDisplay,
+        tableId
+    );
+    return TableType.TABLE;
   }
 
   /**
@@ -1245,7 +1325,8 @@ public class GenericDatabaseDialect implements DatabaseDialect {
 
       // Date is day + month + year
       case Types.DATE: {
-        return rs -> rs.getDate(col, DateTimeUtils.getTimeZoneCalendar(timeZone));
+        return rs -> rs.getDate(col,
+            DateTimeUtils.getTimeZoneCalendar(TimeZone.getTimeZone(ZoneOffset.UTC)));
       }
 
       // Time is a time of day -- hour, minute, seconds, nanoseconds
@@ -1374,6 +1455,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   public String buildInsertStatement(
       TableId table,
       Collection<ColumnId> keyColumns,
@@ -1394,6 +1476,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   public String buildUpdateStatement(
       TableId table,
       Collection<ColumnId> keyColumns,
@@ -1418,6 +1501,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   }
 
   @Override
+  @SuppressWarnings("deprecation")
   public String buildUpsertQueryStatement(
       TableId table,
       Collection<ColumnId> keyColumns,
@@ -1470,7 +1554,12 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       Object value
   ) throws SQLException {
     if (value == null) {
-      statement.setObject(index, null);
+      Integer type = getSqlTypeForSchema(schema);
+      if (type != null) {
+        statement.setNull(index, type);
+      } else {
+        statement.setObject(index, null);
+      }
     } else {
       boolean bound = maybeBindLogical(statement, index, schema, value);
       if (!bound) {
@@ -1480,6 +1569,18 @@ public class GenericDatabaseDialect implements DatabaseDialect {
         throw new ConnectException("Unsupported source data type: " + schema.type());
       }
     }
+  }
+
+  /**
+   * Dialects not supporting `setObject(index, null)` can override this method
+   * to provide a specific sqlType, as per the JDBC documentation
+   * https://docs.oracle.com/javase/7/docs/api/java/sql/PreparedStatement.html
+   *
+   * @param schema the schema
+   * @return the SQL type
+   */
+  protected Integer getSqlTypeForSchema(Schema schema) {
+    return null;
   }
 
   protected boolean maybeBindPrimitive(
@@ -1639,6 +1740,12 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     return Collections.singletonList(builder.toString());
   }
 
+  @Override
+  public void validateSpecificColumnTypes(
+          ResultSetMetaData rsMetadata,
+          List<ColumnId> columns
+  ) throws ConnectException { }
+
   protected List<String> extractPrimaryKeyFieldNames(Collection<SinkRecordField> fields) {
     final List<String> pks = new ArrayList<>();
     for (SinkRecordField f : fields) {
@@ -1759,12 +1866,14 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   /**
    * Return the sanitized form of the supplied JDBC URL, which masks any secrets or credentials.
    *
+   * <p>This implementation replaces the value of all properties that contain {@code password}.
+   *
    * @param url the JDBC URL; may not be null
    * @return the sanitized URL; never null
    */
   protected String sanitizedUrl(String url) {
     // Only replace standard URL-type properties ...
-    return url.replaceAll("(?i)([?&]password=)[^&]*", "$1****");
+    return url.replaceAll("(?i)([?&]([^=&]*)password([^=&]*)=)[^&]*", "$1****");
   }
 
   @Override
